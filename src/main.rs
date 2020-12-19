@@ -6,15 +6,42 @@ extern crate serde;
 use std::env;
 use std::fs;
 use serde::{Deserialize};
-use reqwest::{header};
+use std::io::{Write, LineWriter, BufReader, BufRead};
 
+// Add services that you'd like to notify when your IP changes here.
+enum Service {
+    GoogleDomainsDNS(GoogleConfig),
+}
+
+// Pattern match on the Service Enum
+fn tell_service(ip: String, service : Service) -> Result<String, reqwest::Error> {
+    match service {
+        Service::GoogleDomainsDNS(GoogleConfig) => Ok(google_domains_update(GoogleConfig.endpoint(ip))?)
+   }
+}
+
+// Struct for the google domains credentials requirement.
 #[derive(Deserialize)]
-struct Config {
+struct GoogleConfig {
     username: String,
     password: String,
     hostname: String,
 }
 
+// Method on the GoogleConfig struct to build the google domains endpoint from the google config credentials.
+impl GoogleConfig {
+    fn endpoint(&self, ip: String) -> String {
+        return format!("https://{}:{}@domains.google.com/nic/update?hostname={}&myip={}", self.username, self.password, self.hostname, ip);
+    }
+} 
+
+// Struct used to deserialize the .env.toml file. 
+#[derive(Deserialize)]
+struct Config {
+    google: GoogleConfig,
+}
+
+// Get IP from the ipify service.
 #[tokio::main]
 async fn get_ip() -> Result<String, reqwest::Error> {
     let ip = reqwest::get("https://api.ipify.org")
@@ -24,8 +51,9 @@ async fn get_ip() -> Result<String, reqwest::Error> {
     return Ok(ip)
 }
 
+// Tell Google about IP change.
 #[tokio::main]
-async fn get_google_domains_update(endpoint: String)  -> Result<String, reqwest::Error> {
+async fn google_domains_update(endpoint: String)  -> Result<String, reqwest::Error> {
     let url = reqwest::Url::parse(&endpoint).unwrap();
 
     static APP_USER_AGENT: &str = concat!(
@@ -44,8 +72,32 @@ async fn get_google_domains_update(endpoint: String)  -> Result<String, reqwest:
         .await?
         .text()
         .await?;
+
     return Ok(res);
 
+}
+
+// Read config toml.
+fn parse_config (path: &String) -> Result<Config, std::io::Error>  {
+    let a = fs::read_to_string(path)?;
+    let b : Config = toml::from_str(&a)?;
+    Ok(b)
+}
+
+// Read the last line from the log.
+fn read_last_line(path: String) -> Result<String, std::io::Error> {
+    let input = fs::File::open(path)?;
+    BufReader::new(input).lines().last().unwrap()
+}
+
+// Append a line to the log.
+fn append_to_file(path: &str, s: String) -> Result<(), std::io::Error> {
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .append(true)
+        .create(true)
+        .open(path)?;
+    writeln!(file, "{}/n", s)
 }
 
 fn main() {
@@ -54,40 +106,50 @@ fn main() {
     let config_path = env::var("CONFIG")
         .unwrap_or(".env.toml".to_string());
     
-    let config= fs::read_to_string(config_path);
-    let config = match config {
-        Ok(contents) => contents,
-        Err(_e) => {
-            println!("[ ERROR ] Could not find a .env file.");
-            return
-        },
-    };
 
-    let credentials: Config = toml::from_str(&config).unwrap();
+    let config: Result<Config, std::io::Error> = parse_config(&config_path);
+    let config: Config= match config {
+        Ok(c) => c,
+        Err(e) => {
+            println!("[ ERROR ] Could not get configuration. {}", e);
+            return
+        }
+    };
 
     let ip = get_ip();
+
     let ip = match ip {
         Ok(ip) => ip,
-        Err(_e) => {
-            println!("[ ERROR ] Could not discover ip.");
+        Err(e) => {
+            println!("[ ERROR ] Could not discover ip. {}", e);
             return
         }
     };
 
-    println!("IP: {}", ip);
-    // If ip === last updated ip, return.
+    // TODO: If, current ip === last ip saved in log, return as there is no need to tell google.
+    /*
+     * static LOG_FILE: &str = "log.txt";
+     * let old_ip = read_last_line("log.txt")
+     * if ip === old_ip {return}
+     */
 
-    let payload = format!("https://{}:{}@domains.google.com/nic/update?hostname={}&myip={}", credentials.username, credentials.password, credentials.hostname, ip);
+    // curry our service
+    let tell_service_ip = move |service| tell_service(ip, service);  
 
-    let update = get_google_domains_update(payload);
-    let update = match update {
-        Ok(update) => update, // After a successful update save the just updated ip and return
-        Err(_e) => {
-            println!("[ ERROR ] Could not connect to Google.");
+    let goog = Service::GoogleDomainsDNS(config.google);
+    let response = tell_service_ip(goog);
+    let response = match response {
+        Ok(response) => response,
+        Err(e) => {
+            println!("[ ERROR ] Could not tell the google service. {}", e);
             return
         }
     };
-    println!("Google Says: {}", update);
-    // If that worked, log the change in IP address.
+
+    // TODO: Append new ip to log.
+    /*
+     * append_to_file(LOG_FILE, ip)
+     *
+     */
 
 }
