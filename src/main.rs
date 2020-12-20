@@ -6,8 +6,7 @@ extern crate serde;
 use std::env;
 use std::fs;
 use serde::{Deserialize};
-use std::io::{Write, LineWriter, BufReader, BufRead};
-use tokio::time;
+use std::io::{Write, BufReader, BufRead};
 
 enum Service {
     GoogleDomainsDNS(GoogleConfig),
@@ -81,8 +80,28 @@ fn parse_config (path: &String) -> Result<Config, std::io::Error>  {
 
 // Read the last line from the log.
 fn read_last_line(path: &str) -> Result<String, std::io::Error> {
-    let input = fs::File::open(path)?;
-    BufReader::new(input).lines().last().unwrap()
+
+    let input = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(path)?;
+
+    // Add a line...
+    // get number of lines
+    let last = BufReader::new(input).lines().last();
+
+    if last.is_none() {
+        return Ok(String::from("0.0.0.0"))
+    } else {
+        let line = last.unwrap();
+        match line {
+            Ok(line) => return Ok(line),
+            Err(_e) => return Ok(String::from("nooo!"))
+        }
+    }
+
+    
 }
 
 // Append a line to the log.
@@ -92,7 +111,7 @@ fn append_to_file(path: &str, s: &String) -> Result<(), std::io::Error> {
         .append(true)
         .create(true)
         .open(path)?;
-    writeln!(file, "{}/n", s)
+    writeln!(file, "{}", s)
 }
 
 fn main() {
@@ -130,7 +149,7 @@ fn main() {
         }
     };
 
-    if (old_ip == ip) {
+    if old_ip == ip {
         println!("[ INFO ] Old ip: {} \n New ip: {} \n No change in ip, returning", old_ip, ip );
         return
     }
@@ -140,7 +159,7 @@ fn main() {
 
     let goog = Service::GoogleDomainsDNS(config.google);
     let response = tell_service_ip(goog);
-    let response = match response {
+    match response {
         Ok(response) => response,
         Err(e) => {
             println!("[ ERROR ] Could not tell the google service. {}", e);
