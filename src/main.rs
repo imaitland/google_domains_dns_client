@@ -70,7 +70,6 @@ async fn google_domains_update(endpoint: String)  -> Result<String, reqwest::Err
 
 }
 
-
 // Read config toml.
 fn parse_config (path: &String) -> Result<Config, std::io::Error>  {
     let a = fs::read_to_string(path)?;
@@ -111,7 +110,8 @@ fn append_to_file(path: &str, s: &String) -> Result<(), std::io::Error> {
         .append(true)
         .create(true)
         .open(path)?;
-    writeln!(file, "{}", s)
+    writeln!(file, "{}", s)?;
+    return Ok(())
 }
 
 fn main() {
@@ -167,7 +167,7 @@ fn main() {
         }
     };
 
-    append_to_file(LOG_FILE, &ip);
+    append_to_file(LOG_FILE, &ip).unwrap();
 
     return
 
