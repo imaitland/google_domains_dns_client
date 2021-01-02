@@ -1,3 +1,11 @@
+/*
+ * Many ISPs do not provide free static IP addresses to their customers. This means that servers
+ * running at home, might have their IP addresses changed, at which point they would become
+ * inaccessible to the DNS service that routes traffic to them from the wider world.
+ * To make sure the server remains accessible, we notify certain services, notably the DNS service 
+ * when the IP has changed.
+ */
+
 extern crate reqwest;
 extern crate tokio;
 extern crate toml;
@@ -33,7 +41,8 @@ impl GoogleConfig {
 
 #[derive(Deserialize)]
 struct Config {
-    google: GoogleConfig,
+    google_1: GoogleConfig, // '@' A record
+    google_2: GoogleConfig // 'www' A record
 }
 
 #[tokio::main]
@@ -67,17 +76,14 @@ async fn google_domains_update(endpoint: String)  -> Result<String, reqwest::Err
         .await?;
 
     return Ok(res);
-
 }
 
-// Read config toml.
 fn parse_config (path: &String) -> Result<Config, std::io::Error>  {
     let a = fs::read_to_string(path)?;
     let b : Config = toml::from_str(&a)?;
     Ok(b)
 }
 
-// Read the last line from the log.
 fn read_last_line(path: &str) -> Result<String, std::io::Error> {
 
     let input = fs::OpenOptions::new()
@@ -86,8 +92,6 @@ fn read_last_line(path: &str) -> Result<String, std::io::Error> {
         .create(true)
         .open(path)?;
 
-    // Add a line...
-    // get number of lines
     let last = BufReader::new(input).lines().last();
 
     if last.is_none() {
@@ -99,11 +103,8 @@ fn read_last_line(path: &str) -> Result<String, std::io::Error> {
             Err(_e) => return Ok(String::from("nooo!"))
         }
     }
-
-    
 }
 
-// Append a line to the log.
 fn append_to_file(path: &str, s: &String) -> Result<(), std::io::Error> {
     let mut file = fs::OpenOptions::new()
         .read(true)
@@ -115,8 +116,6 @@ fn append_to_file(path: &str, s: &String) -> Result<(), std::io::Error> {
 }
 
 fn main() {
-    // Read 'config_path' from the environment variable 'CONFIG'.
-    // If 'CONFIG' isn't set, fall back to a default config path.
     let config_path = env::var("CONFIG")
         .unwrap_or(".env.toml".to_string());
     
@@ -150,14 +149,24 @@ fn main() {
     };
 
     if old_ip == ip {
-        println!("[ INFO ] Old ip: {} \n New ip: {} \n No change in ip, returning", old_ip, ip );
+        println!("[ INFO ] Old ip: {} \n New ip: {} \n No change in ip.", old_ip, ip );
         return
     }
 
     // curry our service
     let tell_service_ip = move |service| tell_service(&ip[..], service);  
+    
+    let goog = Service::GoogleDomainsDNS(config.google_1);
+    let response = tell_service_ip(goog);
+    match response {
+        Ok(response) => response,
+        Err(e) => {
+            println!("[ ERROR ] Could not tell the google service. {}", e);
+            return
+        }
+    };
 
-    let goog = Service::GoogleDomainsDNS(config.google);
+    let goog = Service::GoogleDomainsDNS(config.google_2);
     let response = tell_service_ip(goog);
     match response {
         Ok(response) => response,
@@ -168,7 +177,5 @@ fn main() {
     };
 
     append_to_file(LOG_FILE, &ip).unwrap();
-
     return
-
 }
